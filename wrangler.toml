@@ -2,6 +2,12 @@ name = "cloudflare-docker-proxy"
 main = "src/index.js"
 compatibility_date = "2026-10-01"
 
+# Test credentials. Plaintext, so they are visible in this public repo — fine for
+# a gate, and a same-named dashboard Secret would take precedence over them.
+[vars]
+LOGIN_USER = "docker-user"
+LOGIN_PASS = "Sun123"
+
 [observability]
 enabled = true
 head_sampling_rate = 1
