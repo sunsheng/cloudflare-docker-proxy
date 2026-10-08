@@ -49,11 +49,14 @@ Everything below is done once, in the Cloudflare dashboard.
 1. **Create the Worker from this repo**: Workers & Pages → Create → Workers →
    connect the GitHub repository. Keep the default build settings — the Worker
    name (`docker-mirrors`) and entrypoint come from `wrangler.toml`.
-2. **Add the gate secrets**: Worker → Settings → Variables and Secrets → add
+2. **Add the gate secrets** (type *Secret*; plain `vars` work too, but are
+   visible in the dashboard): Worker → Settings → Variables and Secrets → add
    `LOGIN_USER` and `LOGIN_PASS`, type *Secret*. Until both exist the Worker
    answers 503 to everything.
-3. **Attach the domain**: Worker → Settings → Domains & Routes → Add custom
-   domain → `docker.i-yongqi.xyz`.
+3. **Make sure the domain is free**: a custom domain can only be attached to one
+   Worker. If `docker.i-yongqi.xyz` is already on another (for example
+   freshly created) Worker, remove it there first — `wrangler.toml` declares it
+   and the build attaches it to this Worker.
 4. Deploy. Later pushes to `main` rebuild automatically.
 
 `daemon.json` needs no changes: these pulls use an explicit registry host, so

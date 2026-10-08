@@ -6,6 +6,6 @@ compatibility_date = "2026-10-01"
 enabled = true
 head_sampling_rate = 1
 
-# Attach the custom domain in the Cloudflare dashboard (docker.i-yongqi.xyz),
-# or declare it here:
-# routes = [{ pattern = "docker.i-yongqi.xyz/*", custom_domain = true }]
+# The custom domain is declared here so every build attaches it. A custom
+# domain can only belong to one Worker, so detach it elsewhere first.
+routes = [{ pattern = "docker.i-yongqi.xyz", custom_domain = true }]
