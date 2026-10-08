@@ -1,0 +1,11 @@
+name = "docker-mirrors"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+# Attach the custom domain in the Cloudflare dashboard (docker.i-yongqi.xyz),
+# or declare it here:
+# routes = [{ pattern = "docker.i-yongqi.xyz/*", custom_domain = true }]

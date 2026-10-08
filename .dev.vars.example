@@ -1,0 +1,3 @@
+# Local dev only (`wrangler dev`). In production these are Worker secrets.
+LOGIN_USER=docker
+LOGIN_PASS=change-me
