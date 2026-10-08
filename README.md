@@ -42,24 +42,75 @@ Supported by tests: multi-arch manifests (the client `Accept` header travels
 verbatim), blob and manifest streaming, digest headers, `HEAD`, retries, the
 gate, and the token exchange.
 
-## Docker Hub rate limits
+## Which registries work
 
-Cloudflare's egress IPs are shared and sit over Docker Hub's *anonymous* per-IP
-limit, so `docker.io` pulls regularly answer `429` while `ghcr.io`,
-`registry.k8s.io` and the rest are unaffected. Two ways out:
+Verified against the deployed Worker on 2026-10-09 with real `docker pull`
+commands (Docker verifies every digest):
 
-* **Configure an account (recommended — keeps `docker.io` in the reference).**
-  Add `DOCKERHUB_USER` and `DOCKERHUB_TOKEN` (a free Docker Hub account and a
-  read-only personal access token) as Worker secrets. Requests to Docker Hub are
-  then authenticated up front and counted against that account instead of the
-  shared IP — which is also why the gate password exists. Without them the
-  Worker stays anonymous, exactly as before.
-* **Pull through a mirror.** `docker.i-yongqi.xyz/mirror.gcr.io/library/nginx`
-  needs no credentials. The reference just names a different host.
+| Upstream | Status |
+|---|---|
+| `ghcr.io` | works |
+| `registry.k8s.io` | works |
+| `quay.io` | works |
+| `gcr.io` | works |
+| `mcr.microsoft.com` | works |
+| `mirror.gcr.io` | works (Docker Hub content via Google's cache) |
+| `docker.io` | **429** — Docker Hub's anonymous per-IP limit, see below |
 
-Rate limit headers from the upstream (`ratelimit-remaining`,
-`docker-ratelimit-source`) are passed through, so the cause of a 429 is visible
-with `curl -D -`.
+Everything else is forwarded the same way; there is no allow-list.
+
+## Docker Hub (`docker.io`) and its rate limit
+
+`docker.io` is the one upstream that fails, for a reason outside this code:
+Docker Hub limits *anonymous* pulls per egress IP (100 per 6 hours) and
+Cloudflare's egress IPs are shared widely enough to sit over that limit
+essentially permanently. The upstream says so itself:
+
+```json
+{"errors":[{"code":"TOOMANYREQUESTS","message":"You have reached your unauthenticated pull rate limit. ..."}]}
+```
+
+The diagnosis is unambiguous: the same Worker, same egress IP, same moment —
+`docker.io` answers 429 while the six registries above answer 200.
+
+Two ways around it. They can coexist; **A** needs nothing but a different
+reference, **B** keeps the `docker.io` spelling.
+
+### A. Pull Docker Hub images through `mirror.gcr.io` (no credentials)
+
+Google runs a Docker Hub mirror. Paths are identical to Docker Hub, only the
+host changes, and the bytes are the same (digests match):
+
+```sh
+docker pull docker.i-yongqi.xyz/mirror.gcr.io/library/nginx:1.27-alpine
+#               same image as docker.io/library/nginx:1.27-alpine
+```
+
+Checked on 2026-10-09: 10/10 sampled images byte-identical to `docker.io`
+(official `library/*` plus `bitnami/`, `grafana/`, `linuxserver/`, `smallstep/`,
+`jgraph/`), and a digest-pinned reference worked as well. Caveats:
+
+* **Write the reference in full** — `docker.io/library/nginx` becomes
+  `mirror.gcr.io/library/nginx`, official-image `library/` prefix included.
+* **Only explicit references reach the Worker.** `image: nginx` in a Compose
+  file or a Helm chart resolves to `docker.io` and never touches this proxy;
+  rewrite those to `docker.i-yongqi.xyz/mirror.gcr.io/...`, or add a
+  `registry-mirrors` entry pointing at
+  `https://docker.i-yongqi.xyz/mirror.gcr.io` if the editing gets tedious.
+* **Public images only** — `mirror.gcr.io` is anonymous, so private Docker Hub
+  repositories are out either way.
+* It is Google's service, not ours: a pull-through cache can occasionally miss
+  or lag an image. When that happens, use `docker.io/...` through the Worker —
+  it is rate-limited, not blocked.
+
+### B. Configure a Docker Hub account (keeps `docker.io` in the reference)
+
+Add `DOCKERHUB_USER` and `DOCKERHUB_TOKEN` (a free Docker Hub account plus a
+read-only personal access token) as Worker secrets. Requests to Docker Hub are
+then authenticated up front and counted against that account (200 pulls per 6
+hours, per account) instead of the shared IP — which is exactly what the gate
+password is for: only you spend that quota. Without the secrets the Worker stays
+anonymous, exactly as before.
 
 ## Deploy
 
@@ -115,9 +166,10 @@ node test/worker.test.mjs
 
 ## Limits
 
-* Anonymous pulls only: private registries that need credentials are out of
-  scope, and anonymous rate limits (Docker Hub counts them per egress IP, and
-  Cloudflare's is shared) are accepted as they are.
+* Anonymous pulls only, unless `DOCKERHUB_USER` / `DOCKERHUB_TOKEN` are set:
+  private registries that need their own credentials are out of scope, and
+  Docker Hub's anonymous per-IP limit applies to `docker.io/...` references
+  (see above for the two workarounds).
 * Pull only: `docker push` is not proxied.
 * The gate is a shared password, not per-user accounts; whoever holds it can use
   the Worker.

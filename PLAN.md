@@ -24,9 +24,21 @@ Acceptance (verified locally against `wrangler dev` before deploying):
 
 After deploy the same acceptance runs against `docker.i-yongqi.xyz`.
 
+Post-deploy verification (2026-10-09, against the live domain): gate and
+`docker login` work; `ghcr.io`, `registry.k8s.io`, `quay.io`, `gcr.io`,
+`mcr.microsoft.com` and `mirror.gcr.io` all pull successfully with digests
+verified; `docker.io` — see below — is the only failure.
+
 Post-deploy finding (2026-10-09): `ghcr.io` and `registry.k8s.io` pull fine
 through the deployed Worker, but `docker.io` answers 429 — Docker Hub's
 anonymous limit is per egress IP and Cloudflare's shared IPs sit over it. Added
 optional `DOCKERHUB_USER` / `DOCKERHUB_TOKEN` secrets (authenticated pulls,
 counted per account) and documented `mirror.gcr.io` as the credential-free
 alternative. The gate means only this user spends that account's quota.
+
+Decision: route Docker Hub pulls through `mirror.gcr.io` (reference-only change,
+no credentials) and keep the account path wired for whenever an account is
+added. Coverage sampled 10/10 identical to `docker.io` (official images plus
+`bitnami/`, `grafana/`, `linuxserver/`, `smallstep/`, `jgraph/`) and digest-pinned
+references; documented in README together with the caveats (full references,
+explicit host only, public images only, third-party service).
