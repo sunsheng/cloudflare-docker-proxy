@@ -49,10 +49,12 @@ Everything below is done once, in the Cloudflare dashboard.
 1. **Create the Worker from this repo**: Workers & Pages → Create → Workers →
    connect the GitHub repository. Keep the default build settings — the Worker
    name (`cloudflare-docker-proxy`) and entrypoint come from `wrangler.toml`.
-2. **Add the gate secrets** (type *Secret*; plain `vars` work too, but are
-   visible in the dashboard): Worker → Settings → Variables and Secrets → add
-   `LOGIN_USER` and `LOGIN_PASS`, type *Secret*. Until both exist the Worker
-   answers 503 to everything.
+2. **Add the gate password**: Worker → Settings → Variables and Secrets → add
+   `LOGIN_PASS` as type *Secret*. `LOGIN_USER` is not secret and comes from
+   `[vars]` in `wrangler.toml`; the password is deliberately not in this public
+   repo. Until the Secret exists the Worker answers 503 to everything, so add it
+   right after the first deploy. Change the password later by editing the Secret —
+   no rebuild needed.
 3. **Make sure the domain is free**: a custom domain can only be attached to one
    Worker. If `docker.i-yongqi.xyz` is already on another (for example
    freshly created) Worker, remove it there first — `wrangler.toml` declares it

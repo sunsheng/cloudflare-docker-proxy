@@ -2,11 +2,11 @@ name = "cloudflare-docker-proxy"
 main = "src/index.js"
 compatibility_date = "2026-10-01"
 
-# Test credentials. Plaintext, so they are visible in this public repo — fine for
-# a gate, and a same-named dashboard Secret would take precedence over them.
+# The username is not secret, so it lives here. LOGIN_PASS is a dashboard Secret
+# (Worker -> Settings -> Variables and Secrets), so the password never enters
+# this public repo. Until that Secret exists the Worker answers 503.
 [vars]
 LOGIN_USER = "docker-user"
-LOGIN_PASS = "Sun123"
 
 [observability]
 enabled = true
