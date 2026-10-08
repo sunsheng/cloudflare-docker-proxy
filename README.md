@@ -48,7 +48,7 @@ Everything below is done once, in the Cloudflare dashboard.
 
 1. **Create the Worker from this repo**: Workers & Pages → Create → Workers →
    connect the GitHub repository. Keep the default build settings — the Worker
-   name (`docker-mirrors`) and entrypoint come from `wrangler.toml`.
+   name (`cloudflare-docker-proxy`) and entrypoint come from `wrangler.toml`.
 2. **Add the gate secrets** (type *Secret*; plain `vars` work too, but are
    visible in the dashboard): Worker → Settings → Variables and Secrets → add
    `LOGIN_USER` and `LOGIN_PASS`, type *Secret*. Until both exist the Worker
