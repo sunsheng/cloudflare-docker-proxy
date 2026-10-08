@@ -23,3 +23,10 @@ Acceptance (verified locally against `wrangler dev` before deploying):
 4. `node test/worker.test.mjs` green. ✔
 
 After deploy the same acceptance runs against `docker.i-yongqi.xyz`.
+
+Post-deploy finding (2026-10-09): `ghcr.io` and `registry.k8s.io` pull fine
+through the deployed Worker, but `docker.io` answers 429 — Docker Hub's
+anonymous limit is per egress IP and Cloudflare's shared IPs sit over it. Added
+optional `DOCKERHUB_USER` / `DOCKERHUB_TOKEN` secrets (authenticated pulls,
+counted per account) and documented `mirror.gcr.io` as the credential-free
+alternative. The gate means only this user spends that account's quota.

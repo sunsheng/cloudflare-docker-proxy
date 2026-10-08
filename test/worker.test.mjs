@@ -205,5 +205,50 @@ mockFetch(() => {
 res = await worker.fetch(req("/v2/docker.io/library/nginx/manifests/1"), ENV);
 check("persistent failure ends as 502 after all attempts", res.status === 502 && attempts === 5, attempts);
 
+// ---------------------------------------------------------------- optional Docker Hub account
+
+const HUB_ENV = { ...ENV, DOCKERHUB_USER: "hubuser", DOCKERHUB_TOKEN: "hubtok" };
+
+mockFetch((target) => {
+  if (target.startsWith("https://auth.docker.io/token")) return json({ token: "hub_1" });
+  return json({ schemaVersion: 2 });
+});
+res = await worker.fetch(req("/v2/docker.io/library/nginx/manifests/1"), HUB_ENV);
+check("account token is fetched before touching the registry", calls[0]?.url.startsWith("https://auth.docker.io/token") === true, calls[0]?.url);
+check("token request authenticates with the account", calls[0]?.headers.get("authorization") === `Basic ${btoa("hubuser:hubtok")}`);
+check("scope is built from the repository", calls[0]?.url.includes("scope=repository%3Alibrary%2Fnginx%3Apull"), calls[0]?.url);
+check("registry request carries the account token", calls[1]?.headers.get("authorization") === "Bearer hub_1");
+check("no anonymous first attempt when the account is configured", calls.length === 2, calls.length);
+
+const beforeHub = calls.length;
+await worker.fetch(req("/v2/docker.io/library/nginx/blobs/sha256:abc"), HUB_ENV);
+check("account token is cached", calls.length === beforeHub + 1, calls.length - beforeHub);
+
+mockFetch((target) => {
+  if (target.startsWith("https://auth.docker.io/token")) return json({ token: "hub_2" });
+  return json({ schemaVersion: 2 });
+});
+await worker.fetch(req("/v2/docker.io/owner/sub/img/manifests/tag"), HUB_ENV);
+check("nested repository keeps its full path in the scope", calls[0]?.url.includes("scope=repository%3Aowner%2Fsub%2Fimg%3Apull"), calls[0]?.url);
+
+mockFetch((target) => {
+  if (target.startsWith("https://auth.docker.io/token")) return json({ token: "hub_3" });
+  return json({}, 401, { "www-authenticate": bearerChallenge("https://auth.docker.io/token", "registry.docker.io", "repository:x:pull") });
+});
+res = await worker.fetch(req("/v2/docker.io/x/y/manifests/1"), HUB_ENV);
+check("a 401 is still handled on top of the account token", res.status === 401 && (res.headers.get("www-authenticate") || "").startsWith("Basic"));
+
+mockFetch(() => json({}, 200, { "ratelimit-remaining": "42", "docker-ratelimit-source": "203.0.113.7" }));
+res = await worker.fetch(req("/v2/ghcr.io/a/b/manifests/1"), ENV);
+check("upstream rate limit headers are visible to the client", res.headers.get("ratelimit-remaining") === "42" && res.headers.get("docker-ratelimit-source") === "203.0.113.7");
+
+attempts = 0;
+mockFetch(() => {
+  attempts += 1;
+  return attempts < 3 ? json({ errors: [] }, 429) : json({ schemaVersion: 2 });
+});
+res = await worker.fetch(req("/v2/ghcr.io/a/b/manifests/1"), ENV);
+check("429 is retried", res.status === 200 && attempts === 3, attempts);
+
 console.log(failures === 0 ? "\nall tests passed" : `\n${failures} test(s) failed`);
 process.exit(failures === 0 ? 0 : 1);

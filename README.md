@@ -42,6 +42,25 @@ Supported by tests: multi-arch manifests (the client `Accept` header travels
 verbatim), blob and manifest streaming, digest headers, `HEAD`, retries, the
 gate, and the token exchange.
 
+## Docker Hub rate limits
+
+Cloudflare's egress IPs are shared and sit over Docker Hub's *anonymous* per-IP
+limit, so `docker.io` pulls regularly answer `429` while `ghcr.io`,
+`registry.k8s.io` and the rest are unaffected. Two ways out:
+
+* **Configure an account (recommended — keeps `docker.io` in the reference).**
+  Add `DOCKERHUB_USER` and `DOCKERHUB_TOKEN` (a free Docker Hub account and a
+  read-only personal access token) as Worker secrets. Requests to Docker Hub are
+  then authenticated up front and counted against that account instead of the
+  shared IP — which is also why the gate password exists. Without them the
+  Worker stays anonymous, exactly as before.
+* **Pull through a mirror.** `docker.i-yongqi.xyz/mirror.gcr.io/library/nginx`
+  needs no credentials. The reference just names a different host.
+
+Rate limit headers from the upstream (`ratelimit-remaining`,
+`docker-ratelimit-source`) are passed through, so the cause of a 429 is visible
+with `curl -D -`.
+
 ## Deploy
 
 Everything below is done once, in the Cloudflare dashboard.
@@ -55,6 +74,8 @@ Everything below is done once, in the Cloudflare dashboard.
    repo. Until the Secret exists the Worker answers 503 to everything, so add it
    right after the first deploy. Change the password later by editing the Secret —
    no rebuild needed.
+   Optionally add `DOCKERHUB_USER` and `DOCKERHUB_TOKEN` as Secrets too (see
+   [Docker Hub rate limits](#docker-hub-rate-limits)).
 3. **Make sure the domain is free**: a custom domain can only be attached to one
    Worker. If `docker.i-yongqi.xyz` is already on another (for example
    freshly created) Worker, remove it there first — `wrangler.toml` declares it

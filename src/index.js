@@ -31,6 +31,14 @@ const TOKEN_CACHE_MAX = 200;
 const TOKEN_TTL_CAP_MS = 5 * 60 * 1000;
 
 // Reference host -> endpoint that actually answers, for names that are aliases.
+// Docker Hub's own endpoint, and the token service it uses. Pulls through
+// Cloudflare egress IPs are hit by the shared anonymous per-IP limit, so an
+// optional account (DOCKERHUB_USER + DOCKERHUB_TOKEN) is used for this host
+// only, counting pulls against that account instead.
+const HUB_HOST = "registry-1.docker.io";
+const HUB_REALM = "https://auth.docker.io/token";
+const HUB_SERVICE = "registry.docker.io";
+
 const HOST_ALIASES = {
   "docker.io": "registry-1.docker.io",
   "index.docker.io": "registry-1.docker.io",
@@ -59,10 +67,13 @@ const RESPONSE_HEADERS = [
   "content-range",
   "content-type",
   "docker-content-digest",
+  "docker-ratelimit-source",
   "etag",
   "last-modified",
   "location",
   "range",
+  "ratelimit-limit",
+  "ratelimit-remaining",
   "retry-after",
 ];
 
@@ -180,9 +191,8 @@ async function bearerToken(challenge) {
   if (!params) return null;
 
   const key = `${params.realm}|${params.service || ""}|${params.scope || ""}`;
-  const cached = tokenCache.get(key);
-  if (cached && cached.expiresAt > Date.now()) return cached.token;
-  tokenCache.delete(key);
+  const cached = cachedToken(key);
+  if (cached) return cached;
 
   let realm;
   try {
@@ -196,9 +206,24 @@ async function bearerToken(challenge) {
     if (scope) realm.searchParams.append("scope", scope);
   }
 
+  const token = await requestToken(realm.toString(), { accept: "application/json" });
+  if (!token) return null;
+
+  rememberToken(key, token);
+  return token;
+}
+
+function cachedToken(key) {
+  const entry = tokenCache.get(key);
+  if (entry && entry.expiresAt > Date.now()) return entry.token;
+  tokenCache.delete(key);
+  return null;
+}
+
+async function requestToken(url, headers) {
   let response;
   try {
-    response = await fetchUpstream(realm.toString(), { headers: { accept: "application/json" }, redirect: "follow" });
+    response = await fetchUpstream(url, { headers, redirect: "follow" });
   } catch {
     return null;
   }
@@ -210,9 +235,38 @@ async function bearerToken(challenge) {
     return null;
   }
 
-  const token = typeof payload?.token === "string" ? payload.token
+  return typeof payload?.token === "string" ? payload.token
     : typeof payload?.access_token === "string" ? payload.access_token
     : null;
+}
+
+// "<repository>/manifests|blobs/<reference>" -> "<repository>"
+function repositoryFromPath(segments) {
+  const path = segments.join("/");
+  return /^(.*?)\/(?:manifests|blobs|tags|referrers)\//.exec(path)?.[1] || path;
+}
+
+// Account token for Docker Hub, when credentials are configured. Returns null
+// (and the request stays anonymous) when they are not, or when the account is
+// unusable — the anonymous path then still applies.
+async function dockerHubToken(repository, env) {
+  if (!env.DOCKERHUB_USER || !env.DOCKERHUB_TOKEN) return null;
+
+  const scope = `repository:${repository}:pull`;
+  const key = `hub|${scope}`;
+  const cached = cachedToken(key);
+  if (cached) return cached;
+
+  const realm = new URL(HUB_REALM);
+  realm.searchParams.set("service", HUB_SERVICE);
+  realm.searchParams.set("scope", scope);
+
+  const headers = {
+    accept: "application/json",
+    authorization: `Basic ${btoa(`${env.DOCKERHUB_USER}:${env.DOCKERHUB_TOKEN}`)}`,
+  };
+
+  const token = await requestToken(realm.toString(), headers);
   if (!token) return null;
 
   rememberToken(key, token);
@@ -223,7 +277,7 @@ async function bearerToken(challenge) {
 // method this proxy speaks (GET/HEAD) is safe to repeat: retry briefly instead
 // of failing the whole `docker pull` at the first blip.
 const RETRY_ATTEMPTS = 5;
-const RETRYABLE_STATUS = [502, 503, 504];
+const RETRYABLE_STATUS = [429, 502, 503, 504];
 
 const backoff = (attempt) => new Promise((resolve) => setTimeout(resolve, Math.min(100 * 2 ** (attempt - 1), 500)));
 
@@ -290,6 +344,13 @@ export default {
 
     const target = `https://${host}/v2/${segments.join("/")}${url.search}`;
     const headers = requestHeaders(request);
+
+    // With an account configured, Docker Hub requests are authenticated up
+    // front instead of going anonymous.
+    if (host === HUB_HOST) {
+      const hubToken = await dockerHubToken(repositoryFromPath(segments), env);
+      if (hubToken) headers.set("authorization", `Bearer ${hubToken}`);
+    }
 
     let upstream;
     try {
